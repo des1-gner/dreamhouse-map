@@ -54,8 +54,6 @@ select { appearance: none; background-image: linear-gradient(45deg, transparent 
 
 /* ---------- map ---------- */
 #map { flex: 1; background: var(--bg); }
-/* OSM tiles turned dark: invert, then rotate hues back so water stays blue. */
-.basemap { filter: invert(1) hue-rotate(180deg) brightness(.85) contrast(.9) saturate(.5); }
 .leaflet-container { font: inherit; }
 .leaflet-bar a, .leaflet-bar a:hover { background: var(--panel); color: var(--text); border-color: var(--line); }
 .leaflet-control-attribution { background: rgba(13,17,23,.75) !important; color: var(--muted); }

@@ -3,11 +3,16 @@
 // density tiles which load live from the Atlas of Living Australia.
 
 const map = L.map("map", { preferCanvas: true }).setView([-37.84, 145.05], 10);
-L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-  maxZoom: 19,
-  className: "basemap",  // darkened with a CSS filter in style.css
-  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+// Esri dark grey canvas: works from the extension panel too (OSM's tile servers
+// block requests without a referring page). Labels sit on their own layer above overlays.
+const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas";
+L.tileLayer(`${ESRI}/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}`, {
+  maxZoom: 19, maxNativeZoom: 16,
+  attribution: 'Basemap &copy; <a href="https://www.esri.com/">Esri</a>, HERE, Garmin, &copy; OpenStreetMap contributors',
 }).addTo(map);
+map.createPane("labels").style.zIndex = 450;
+map.getPane("labels").style.pointerEvents = "none";
+L.tileLayer(`${ESRI}/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}`, { maxZoom: 19, maxNativeZoom: 16, pane: "labels" }).addTo(map);
 
 // The browser extension embeds this page and sets these before loading app.js.
 const DATA_BASE = window.DREAMHOUSE_DATA_BASE || "data/";
