@@ -2,10 +2,10 @@
 // All data comes from web/data/*.geojson (built by scripts/), except the wildlife
 // density tiles which load live from the Atlas of Living Australia.
 
-const map = L.map("map", { preferCanvas: true }).setView([-38.07, 145.32], 11);
+const map = L.map("map", { preferCanvas: true }).setView([-37.84, 145.05], 10);
 L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: 19,
-  className: "basemap",
+  className: "basemap",  // darkened with a CSS filter in style.css
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
 }).addTo(map);
 
@@ -184,35 +184,88 @@ function sparkline(history) {
 }
 
 // ---------- layers ----------
+// Listings are plain red dots on their own pane above every icon.
+map.createPane("listingsPane").style.zIndex = 650;
+const listingRenderer = L.canvas({ pane: "listingsPane" });
+
 function buildListings() {
   const budgetOnly = document.getElementById("budget-only").checked;
   const feats = (data.listings?.features || []).filter((f) => !budgetOnly || f.properties.in_budget);
-  document.getElementById("count-listings").textContent = `(${feats.length})`;
+  document.getElementById("count-listings").textContent = feats.length ? `(${feats.length})` : "";
   return L.layerGroup(feats.map((f) => {
     const [lon, lat] = f.geometry.coordinates;
-    const icon = L.divIcon({ className: "", html: `<div class="pin ${f.properties.in_budget ? "in" : "out"}"></div>`, iconSize: [18, 18], iconAnchor: [9, 18] });
-    return L.marker([lat, lon], { icon }).bindPopup(() => report([lon, lat], f), { maxWidth: 340 });
+    return L.circleMarker([lat, lon], {
+      renderer: listingRenderer, radius: 6.5, weight: 2, color: "#fff",
+      fillColor: f.properties.in_budget ? "#ff3b30" : "#8b949e", fillOpacity: 1,
+    }).bindPopup(() => report([lon, lat], f), { maxWidth: 340 })
+      .bindTooltip(`${esc(f.properties.address || "")}${f.properties.notes ? `<br>${esc(f.properties.notes)}` : ""}`);
   }));
 }
 
-const BRAND_COLOURS = { Coles: "#e01a22", Woolworths: "#178841", ALDI: "#00205b", Costco: "#005daa", IGA: "#d6001c", FoodWorks: "#7a2", Other: "#888" };
+// Icon layers draw only the features in view, and only from a minimum zoom,
+// so thousands of bus stops don't slow the map down.
+const MAX_ICONS = 1500;
+const iconCache = new Map();
+function icon(emoji, ring, small = false) {
+  const k = emoji + (ring || "") + small;
+  if (!iconCache.has(k)) {
+    iconCache.set(k, L.divIcon({
+      className: "", iconSize: small ? [18, 18] : [24, 24], iconAnchor: small ? [9, 9] : [12, 12],
+      html: `<div class="mk${small ? " sm" : ""}"${ring ? ` style="border-color:${ring}"` : ""}>${emoji}</div>`,
+    }));
+  }
+  return iconCache.get(k);
+}
+
+function viewportLayer({ features, minZoom, marker }) {
+  const group = L.layerGroup();
+  const draw = () => {
+    group.clearLayers();
+    group.hiddenByZoom = map.getZoom() < minZoom;
+    if (!group.hiddenByZoom) {
+      const b = map.getBounds().pad(0.2);
+      let n = 0;
+      for (const f of features()) {
+        const [lon, lat] = f.geometry.coordinates;
+        if (!b.contains([lat, lon])) continue;
+        group.addLayer(marker(f, [lat, lon]));
+        if (++n >= MAX_ICONS) break;
+      }
+    }
+    updateKey();
+  };
+  group.on("add", () => { map.on("moveend", draw); draw(); });
+  group.on("remove", () => map.off("moveend", draw));
+  return group;
+}
+
+const BRAND_COLOURS = { Coles: "#e01a22", Woolworths: "#1fa64a", ALDI: "#2f6fe0", Costco: "#2f6fe0", IGA: "#ff6b6b", FoodWorks: "#8bc34a", Other: "#8b949e" };
 function buildSupermarkets() {
   const majorOnly = document.getElementById("major-only").checked;
-  return L.geoJSON(data.supermarkets, {
-    filter: (f) => !majorOnly || f.properties.major,
-    pointToLayer: (f, ll) => L.circleMarker(ll, { radius: 6, weight: 2, color: "#fff", fillColor: BRAND_COLOURS[f.properties.brand] || "#888", fillOpacity: 1 }),
-    onEachFeature: (f, l) => l.bindTooltip(esc(f.properties.name)),
+  const feats = (data.supermarkets?.features || []).filter((f) => !majorOnly || f.properties.major);
+  return viewportLayer({
+    features: () => feats, minZoom: 11,
+    marker: (f, ll) => L.marker(ll, { icon: icon("🛒", BRAND_COLOURS[f.properties.brand]) })
+      .bindTooltip(`<b>${esc(f.properties.name)}</b><br>${esc(f.properties.brand)}`),
   });
 }
 
-const MODE_STYLE = { train: { radius: 7, fillColor: "#0072ce" }, tram: { radius: 4, fillColor: "#78be20" }, bus: { radius: 3, fillColor: "#ff8200" } };
+const MODES = {
+  train: { emoji: "🚆", minZoom: 10, label: "Train station" },
+  tram: { emoji: "🚊", minZoom: 14, label: "Tram stop" },
+  bus: { emoji: "🚌", minZoom: 15, label: "Bus stop" },
+};
 function buildStops(mode) {
-  return L.geoJSON(data.transport_stops, {
-    filter: (f) => f.properties.mode === mode,
-    pointToLayer: (f, ll) => L.circleMarker(ll, { ...MODE_STYLE[mode], color: "#fff", weight: 1, fillOpacity: 0.95 }),
-    onEachFeature: (f, l) => {
+  const feats = (data.transport_stops?.features || []).filter((f) => f.properties.mode === mode);
+  return viewportLayer({
+    features: () => feats, minZoom: MODES[mode].minZoom,
+    marker: (f, ll) => {
       const p = f.properties;
-      l.bindTooltip(`<b>${esc(p.name)}</b><br>${p.cbd_minutes != null ? `${p.cbd_minutes} min to CBD` : "no CBD estimate"}${p.cbd_via ? `<br><span style="color:#666">${esc(p.cbd_via)}</span>` : ""}${p.routes?.length ? `<br>Routes: ${esc(p.routes.slice(0, 8).join(", "))}` : ""}`);
+      const small = mode !== "train" || map.getZoom() < 12;
+      return L.marker(ll, { icon: icon(MODES[mode].emoji, null, small) }).bindTooltip(
+        `<b>${esc(p.name)}</b><br>${p.cbd_minutes != null ? `${p.cbd_minutes} min to CBD` : "no CBD estimate"}` +
+        `${p.cbd_via ? `<br><span class="muted">${esc(p.cbd_via)}</span>` : ""}` +
+        `${p.routes?.length ? `<br>Routes: ${esc(p.routes.slice(0, 8).join(", "))}` : ""}`);
     },
   });
 }
@@ -230,20 +283,28 @@ const WILDLIFE_Q = {  // grid colour ramps from yellow (few records) to red (man
 function buildWildlife(key) {
   const q = WILDLIFE_Q[key];
   return L.tileLayer.wms(ALA_WMS, {
-    layers: "ALA:occurrences", format: "image/png", transparent: true, opacity: 0.55, styles: "",
+    layers: "ALA:occurrences", format: "image/png", transparent: true, opacity: 0.6, styles: "",
     q, fq: "year:[2010 TO *]", ENV: "colormode:grid;name:circle;size:4;opacity:0.8",
     attribution: '<a href="https://www.ala.org.au/">Atlas of Living Australia</a>',
   });
 }
 
+const HAZARD = {
+  BPA: { fill: "#ff9f43", label: "Bushfire Prone Area" },
+  BMO: { fill: "#ff4d4f", label: "Bushfire Management Overlay" },
+  flood: { fill: "#3fa9ff", label: "Flood overlay (LSIO / FO / SBO / UFZ)" },
+};
 const builders = {
   listings: buildListings,
   supermarkets: buildSupermarkets,
   train: () => buildStops("train"),
   tram: () => buildStops("tram"),
   bus: () => buildStops("bus"),
-  bushfire: () => buildPolys("bushfire", (f) => ({ color: "#d1242f", weight: 1, fillColor: f.properties.kind === "BMO" ? "#d1242f" : "#fb8f44", fillOpacity: 0.25 })),
-  flood: () => buildPolys("flood", () => ({ color: "#0969da", weight: 1, fillColor: "#54aeff", fillOpacity: 0.3 })),
+  bushfire: () => buildPolys("bushfire", (f) => {
+    const c = HAZARD[f.properties.kind === "BMO" ? "BMO" : "BPA"].fill;
+    return { color: c, weight: 1, fillColor: c, fillOpacity: 0.25 };
+  }),
+  flood: () => buildPolys("flood", () => ({ color: HAZARD.flood.fill, weight: 1, fillColor: HAZARD.flood.fill, fillOpacity: 0.3 })),
   snakes: () => buildWildlife("snakes"),
   spiders: () => buildWildlife("spiders"),
   mosquitoes: () => buildWildlife("mosquitoes"),
@@ -254,25 +315,27 @@ function refresh(name) {
   if (layers[name]) map.removeLayer(layers[name]);
   delete layers[name];
   const box = document.querySelector(`[data-layer="${name}"]`);
-  if (!box.checked) return;
-  if (DATA_FOR[name] && !data[DATA_FOR[name]]) { box.disabled = true; box.checked = false; return; }
-  layers[name] = builders[name]().addTo(map);
-  if (layers.listings && name !== "listings") layers.listings.eachLayer((m) => m.setZIndexOffset?.(1000));
+  if (box.checked && DATA_FOR[name] && !data[DATA_FOR[name]]) { box.disabled = true; box.checked = false; }
+  if (box.checked) layers[name] = builders[name]().addTo(map);
+  updateKey();
 }
 
 // ---------- choropleth ----------
+// Perceptually uniform ramps that read on a dark map: viridis when high is good,
+// inferno when high is a cost (price, crime, public housing).
 const RAMPS = {
-  good_high: ["#f7fcf5", "#c7e9c0", "#74c476", "#31a354", "#006d2c"],
-  bad_high: ["#fff5eb", "#fdd0a2", "#fd8d3c", "#e6550d", "#a63603"],
+  good_high: ["#440154", "#3b528b", "#21918c", "#5ec962", "#fde725"],
+  bad_high: ["#320a5e", "#781c6d", "#bc3754", "#ed6925", "#fbb61a"],
 };
 const CHORO = {
-  median_hh_income_weekly: { ramp: "good_high", f: (v) => fmt.money(v) },
-  pct_public_housing: { ramp: "bad_high", f: (v) => v.toFixed(1) + "%" },
-  crime_rate_per_100k: { ramp: "bad_high", f: fmt.num },
-  median_house_price: { ramp: "bad_high", f: (v) => "$" + Math.round(v / 1000) + "k" },
-  price_growth_5y_pct: { ramp: "good_high", f: fmt.pct },
-  price_growth_10y_pct: { ramp: "good_high", f: fmt.pct },
+  median_hh_income_weekly: { ramp: "good_high", f: (v) => fmt.money(v) + "/wk", label: "Median household income" },
+  pct_public_housing: { ramp: "bad_high", f: (v) => v.toFixed(1) + "%", label: "Public housing" },
+  crime_rate_per_100k: { ramp: "bad_high", f: fmt.num, label: "Crime per 100k people" },
+  median_house_price: { ramp: "bad_high", f: (v) => "$" + Math.round(v / 1000) + "k", label: "Median house price" },
+  price_growth_5y_pct: { ramp: "good_high", f: fmt.pct, label: "House price growth, 5 yr" },
+  price_growth_10y_pct: { ramp: "good_high", f: fmt.pct, label: "House price growth, 10 yr" },
 };
+let choroLegend = "";
 
 function quantiles(vals, n) {
   const s = [...vals].sort((a, b) => a - b);
@@ -281,23 +344,58 @@ function quantiles(vals, n) {
 
 function buildChoropleth() {
   if (layers.choro) map.removeLayer(layers.choro);
-  const key = document.getElementById("choropleth").value, legend = document.getElementById("legend");
-  legend.innerHTML = "";
-  if (!key) return;
-  if (!data.suburbs) { legend.textContent = "Suburb data not built yet."; return; }
-  const vals = data.suburbs.features.map((f) => f.properties[key]).filter((v) => v != null);
-  if (!vals.length) { legend.textContent = "No values for this metric."; return; }
-  const ramp = RAMPS[CHORO[key].ramp], breaks = quantiles(vals, ramp.length);
-  const colour = (v) => v == null ? "#ddd" : ramp[breaks.filter((b) => v > b).length];
-  layers.choro = L.geoJSON(data.suburbs, {
-    style: (f) => ({ color: "#555", weight: 0.6, fillColor: colour(f.properties[key]), fillOpacity: 0.6 }),
-    onEachFeature: (f, l) => l.bindTooltip(`${esc(f.properties.name)}: ${f.properties[key] == null ? "–" : CHORO[key].f(f.properties[key])}`, { sticky: true }),
-  }).addTo(map);
-  layers.choro.bringToBack();
-  layers.choro.on("click", (e) => { L.popup({ maxWidth: 340 }).setLatLng(e.latlng).setContent(report([e.latlng.lng, e.latlng.lat])).openOn(map); });
-  const ticks = [Math.min(...vals), ...breaks, Math.max(...vals)];
-  legend.innerHTML = `<div class="bar">${ramp.map((c) => `<span style="background:${c}"></span>`).join("")}</div>
-    <div class="ticks"><span>${CHORO[key].f(ticks[0])}</span><span>${CHORO[key].f(ticks[Math.floor(ticks.length / 2)])}</span><span>${CHORO[key].f(ticks.at(-1))}</span></div>`;
+  delete layers.choro;
+  choroLegend = "";
+  const key = document.getElementById("choropleth").value;
+  const vals = key && data.suburbs ? data.suburbs.features.map((f) => f.properties[key]).filter((v) => v != null) : [];
+  if (key && vals.length) {
+    const ramp = RAMPS[CHORO[key].ramp], breaks = quantiles(vals, ramp.length);
+    const colour = (v) => v == null ? "#2d333b" : ramp[breaks.filter((b) => v > b).length];
+    layers.choro = L.geoJSON(data.suburbs, {
+      style: (f) => ({ color: "rgba(255,255,255,.28)", weight: 0.6, fillColor: colour(f.properties[key]), fillOpacity: 0.42 }),
+      onEachFeature: (f, l) => l.bindTooltip(`${esc(f.properties.name)}: ${f.properties[key] == null ? "no data" : CHORO[key].f(f.properties[key])}`, { sticky: true }),
+    }).addTo(map);
+    layers.choro.bringToBack();
+    layers.choro.on("click", (e) => { L.popup({ maxWidth: 340 }).setLatLng(e.latlng).setContent(report([e.latlng.lng, e.latlng.lat])).openOn(map); });
+    const lo = Math.min(...vals), hi = Math.max(...vals);
+    choroLegend = `<div class="key-title">${CHORO[key].label}</div>
+      <div class="bar">${ramp.map((c) => `<span style="background:${c}"></span>`).join("")}</div>
+      <div class="ticks"><span>${CHORO[key].f(lo)}</span><span>${CHORO[key].f(breaks[Math.floor(breaks.length / 2)])}</span><span>${CHORO[key].f(hi)}</span></div>
+      <div class="key-note">Each colour is a fifth of suburbs. Grey = no data.</div>`;
+  }
+  updateKey();
+}
+
+// ---------- map key ----------
+const keyControl = L.control({ position: "bottomleft" });
+keyControl.onAdd = () => {
+  const div = L.DomUtil.create("div", "map-key");
+  L.DomEvent.disableClickPropagation(div);
+  L.DomEvent.disableScrollPropagation(div);
+  return div;
+};
+keyControl.addTo(map);
+
+function updateKey() {
+  const el = keyControl.getContainer();
+  if (!el) return;
+  const on = (n) => !!layers[n];
+  const zoomNote = (n) => layers[n]?.hiddenByZoom ? ` <span class="muted">(zoom in)</span>` : "";
+  const rows = [];
+  if (on("listings")) rows.push(`<span class="k-dot"></span>Listing`);
+  for (const m of ["train", "tram", "bus"]) if (on(m)) rows.push(`<span class="k-ico">${MODES[m].emoji}</span>${MODES[m].label}${zoomNote(m)}`);
+  if (on("supermarkets")) {
+    rows.push(`<span class="k-ico">🛒</span>Supermarket${zoomNote("supermarkets")}<div class="k-brands">${
+      ["Coles", "Woolworths", "ALDI", "IGA"].map((b) => `<span><i style="border-color:${BRAND_COLOURS[b]}"></i>${b}</span>`).join("")}</div>`);
+  }
+  if (on("bushfire")) for (const k of ["BPA", "BMO"]) rows.push(`<span class="k-sw" style="background:${HAZARD[k].fill}"></span>${HAZARD[k].label}`);
+  if (on("flood")) rows.push(`<span class="k-sw" style="background:${HAZARD.flood.fill}"></span>${HAZARD.flood.label}`);
+  const wild = ["snakes", "spiders", "mosquitoes"].filter(on);
+  if (wild.length) rows.push(`<span class="k-sw k-grid"></span>Sightings: few → many`);
+  el.innerHTML = rows.length || choroLegend
+    ? `<div class="key-head">Map key</div>${rows.map((r) => `<div class="k-row">${r}</div>`).join("")}${choroLegend ? `<div class="k-choro">${choroLegend}</div>` : ""}`
+    : "";
+  el.style.display = el.innerHTML ? "" : "none";
 }
 
 // ---------- wiring ----------
@@ -316,15 +414,29 @@ function reaSearchUrl() {
   const bbox = [b.getNorth(), b.getWest(), b.getSouth(), b.getEast()].map((x) => x.toFixed(6)).join(",");
   return `${REA}/buy/${path}/map-1?misc=ex-no-display-price&boundingBox=${encodeURIComponent(bbox)}&activeSort=price-asc&sourcePage=map`;
 }
+const REA_MIN_GAP_MS = 5000;  // at most one REA page load every 5 s
+let reaLastLoad = 0, reaLastUrl = "", reaTimer = null;
+function requestRea(force = false) {
+  if (!haveExtension) return;
+  const url = reaSearchUrl();
+  if (!force && url === reaLastUrl) return;
+  const wait = reaLastLoad + REA_MIN_GAP_MS - Date.now();
+  clearTimeout(reaTimer);
+  if (wait > 0) { reaTimer = setTimeout(() => requestRea(force), wait); return; }
+  reaLastLoad = Date.now();
+  reaLastUrl = url;
+  siteDriven = true;
+  reaHint.textContent = "Loading from realestate.com.au…";
+  window.postMessage({ type: "dreamhouse:load", url }, location.origin);
+}
 if (reaBtn) {
   reaBtn.disabled = true;
-  reaBtn.addEventListener("click", () => {
-    if (!haveExtension) return;
-    reaBtn.disabled = true;
-    reaHint.textContent = "Loading from realestate.com.au…";
-    window.postMessage({ type: "dreamhouse:load", url: reaSearchUrl() }, location.origin);
-    setTimeout(() => { reaBtn.disabled = false; }, 8000);  // one load at a time
+  reaBtn.addEventListener("click", () => requestRea(true));
+  const auto = document.getElementById("rea-auto");
+  map.on("moveend", () => {
+    if (auto.checked) { clearTimeout(reaTimer); reaTimer = setTimeout(() => requestRea(), 1200); }
   });
+  ["rea-min", "rea-max", "rea-land"].forEach((id) => document.getElementById(id).addEventListener("change", () => auto.checked && requestRea()));
   window.addEventListener("message", (e) => {
     if (e.source !== window || e.origin !== location.origin) return;
     if (e.data?.type === "dreamhouse:extension") {
@@ -333,6 +445,14 @@ if (reaBtn) {
       reaHint.textContent = "Loads this map area on realestate.com.au in a background tab of your browser.";
     } else if (e.data?.type === "dreamhouse:load-status") {
       reaHint.textContent = e.data.text;
+    } else if (e.data?.type === "dreamhouse:diag" && e.data.diag) {
+      const d = e.data.diag;
+      reaHint.textContent = d.visible > 0
+        ? `Loaded ${d.visible} listings from realestate.com.au.`
+        : d.listingsFound > 0
+          ? "realestate.com.au returned listings, but none inside this map area."
+          : `realestate.com.au loaded ("${d.title}") but no listings were found. ` +
+            (d.hasArgonaut || d.jsonResponses ? "Its data format may have changed." : "It may be showing a check page; open the background tab and complete it.");
     }
   });
 }
@@ -373,18 +493,17 @@ function summarise(f) {
 function fitListings() {
   const pts = (data.listings?.features || []).map((f) => [f.geometry.coordinates[1], f.geometry.coordinates[0]]);
   if (pts.length > 1) map.fitBounds(pts, { padding: [40, 40], maxZoom: 15 });
-  else if (pts.length === 1) map.setView(pts[0], 15);
 }
 
 // Listings from your realestate.com.au tab, sent by the browser extension: either
 // into the side panel on REA (EXTENSION) or into this site via site-bridge.js.
 const REA = "https://www.realestate.com.au";
-let lastBox = null;
+let lastBox = null, siteDriven = false;  // siteDriven: this map asked for the listings, so don't move it
 function receiveListings(msg) {
   data.listings = { type: "FeatureCollection", features: (msg.features || []).filter((f) => Array.isArray(f?.geometry?.coordinates)) };
   refresh("listings");
   const box = msg.box && JSON.stringify(msg.box);
-  if (box && box !== lastBox) {
+  if (box && box !== lastBox && !siteDriven) {
     lastBox = box;
     map.fitBounds([[msg.box.south, msg.box.west], [msg.box.north, msg.box.east]]);
   } else if (!box && !lastBox) fitListings();
