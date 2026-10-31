@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dreamhouse Finder</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside id="panel">
+    <h1>Dreamhouse Finder</h1>
+
+    <form id="search">
+      <input id="search-input" type="search" placeholder="Check an address…" autocomplete="off">
+    </form>
+    <p class="hint">Or click anywhere on the map for a report on that spot.</p>
+
+    <section>
+      <h2>Listings</h2>
+      <label><input type="checkbox" data-layer="listings" checked> Listings <span class="count" id="count-listings"></span></label>
+      <label><input type="checkbox" id="budget-only" checked> In budget only</label>
+    </section>
+
+    <section>
+      <h2>Suburb shading</h2>
+      <select id="choropleth">
+        <option value="">None</option>
+        <option value="median_hh_income_weekly">Median household income</option>
+        <option value="pct_public_housing">Public housing %</option>
+        <option value="crime_rate_per_100k">Crime rate (per 100k)</option>
+        <option value="median_house_price">Median house price</option>
+        <option value="price_growth_5y_pct">Price growth, 5 yr</option>
+        <option value="price_growth_10y_pct">Price growth, 10 yr</option>
+      </select>
+      <div id="legend"></div>
+    </section>
+
+    <section>
+      <h2>Getting around</h2>
+      <label><input type="checkbox" data-layer="train" checked> Train stations</label>
+      <label><input type="checkbox" data-layer="tram"> Tram stops</label>
+      <label><input type="checkbox" data-layer="bus"> Bus stops</label>
+      <label><input type="checkbox" data-layer="supermarkets" checked> Supermarkets</label>
+      <label class="sub"><input type="checkbox" id="major-only" checked> Coles / Woolworths / ALDI / Costco only</label>
+    </section>
+
+    <section>
+      <h2>Hazards</h2>
+      <label><input type="checkbox" data-layer="bushfire"> Bushfire (BPA / BMO)</label>
+      <label><input type="checkbox" data-layer="flood"> Flood overlays</label>
+    </section>
+
+    <section>
+      <h2>Wildlife sightings</h2>
+      <label><input type="checkbox" data-layer="snakes"> Snakes</label>
+      <label><input type="checkbox" data-layer="spiders"> Redback / white-tail / funnel-web</label>
+      <label><input type="checkbox" data-layer="mosquitoes"> Mosquitoes</label>
+      <p class="hint">Atlas of Living Australia records since 2010. Reflects where people report sightings, not true abundance.</p>
+    </section>
+
+    <p id="status" class="hint"></p>
+  </aside>
+  <main id="map"></main>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="app.js"></script>
+</body>
+</html>
