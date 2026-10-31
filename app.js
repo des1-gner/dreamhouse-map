@@ -9,6 +9,10 @@ L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
 }).addTo(map);
 
+// The browser extension embeds this page and sets these before loading app.js.
+const DATA_BASE = window.DREAMHOUSE_DATA_BASE || "data/";
+const EXTENSION = !!window.DREAMHOUSE_EXTENSION;
+
 const data = {};    // name -> FeatureCollection (or null if missing)
 const layers = {};  // name -> Leaflet layer
 const statusEl = document.getElementById("status");
@@ -54,7 +58,7 @@ function nearest(name, pt, filter = () => true, limit = 1) {
 
 async function load(name) {
   try {
-    const r = await fetch(`data/${name}.geojson`);
+    const r = await fetch(`${DATA_BASE}${name}.geojson`);
     if (!r.ok) throw new Error(r.status);
     data[name] = await r.json();
   } catch {
@@ -129,10 +133,11 @@ function report(pt, listing) {
     if (suburb.price_history) h += sparkline(suburb.price_history);
   }
 
-  if (p?.wildlife) {
-    const w = p.wildlife;
-    h += `<h4>Wildlife sightings within ${p.wildlife_radius_km} km</h4><div>🐍 ${w.snakes} · 🕷️ ${w.spiders} · 🦟 ${w.mosquitoes}</div>`;
-  }
+  const wid = `wl-${++reportSeq}`;
+  h += `<h4>Wildlife sightings within ${p?.wildlife_radius_km || WILDLIFE_RADIUS_KM} km (since 2010)</h4><div id="${wid}">`;
+  if (p?.wildlife) h += wildlifeLine(p.wildlife);
+  else { h += `<span class="muted">loading…</span>`; fillWildlife(wid, pt); }
+  h += `</div>`;
 
   const addr = p?.address;
   h += `<div class="links" style="margin-top:8px">`;
@@ -141,6 +146,30 @@ function report(pt, listing) {
   h += `<a href="https://www.google.com/maps?q=${pt[1]},${pt[0]}" target="_blank" rel="noopener">Google Maps</a>`;
   h += `</div></div>`;
   return h;
+}
+
+// Live wildlife counts from the Atlas of Living Australia for spots without precomputed ones.
+let reportSeq = 0;
+const WILDLIFE_RADIUS_KM = 2;
+const wildlifeCache = new Map();
+const wildlifeLine = (w) => `🐍 ${w.snakes} · 🕷️ ${w.spiders} · 🦟 ${w.mosquitoes}`;
+async function fillWildlife(id, [lon, lat]) {
+  const key = `${lon.toFixed(3)},${lat.toFixed(3)}`;
+  if (!wildlifeCache.has(key)) {
+    wildlifeCache.set(key, Promise.all(Object.entries(WILDLIFE_Q).map(async ([k, q]) => {
+      const u = `https://biocache-ws.ala.org.au/ws/occurrences/search?pageSize=0&radius=${WILDLIFE_RADIUS_KM}&lat=${lat}&lon=${lon}&fq=${encodeURIComponent("year:[2010 TO *]")}&q=${encodeURIComponent(q)}`;
+      return [k, (await (await fetch(u)).json()).totalRecords ?? "?"];
+    })).then(Object.fromEntries));
+  }
+  try {
+    const w = await wildlifeCache.get(key);
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = wildlifeLine(w);
+  } catch {
+    wildlifeCache.delete(key);
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = `<span class="muted">unavailable</span>`;
+  }
 }
 
 function sparkline(history) {
@@ -292,9 +321,55 @@ document.getElementById("budget-only").addEventListener("change", () => refresh(
 document.getElementById("major-only").addEventListener("change", () => refresh("supermarkets"));
 document.getElementById("choropleth").addEventListener("change", buildChoropleth);
 
-(async () => {
-  await Promise.all(["listings", "suburbs", "supermarkets", "transport_stops", "bushfire", "flood"].map(load));
-  Object.keys(builders).forEach(refresh);
+// One-line summary per listing, shown as a badge on the realestate.com.au result cards.
+function summarise(f) {
+  const pt = f.geometry.coordinates, c = bestCommute(pt);
+  const best = Object.entries(c).filter(([, v]) => v).sort(([, a], [, b]) => a.total - b.total)[0];
+  const suburb = featuresAt("suburbs", pt)[0]?.properties;
+  return {
+    id: f.properties.id,
+    cbd: best ? `${best[1].total} min by ${best[0]}` : null,
+    growth10: suburb?.price_growth_10y_pct ?? null,
+    income: suburb?.median_hh_income_weekly ?? null,
+    publicHousing: suburb?.pct_public_housing ?? null,
+    bushfire: featuresAt("bushfire", pt).length > 0,
+    flood: featuresAt("flood", pt).length > 0,
+  };
+}
+
+function fitListings() {
   const pts = (data.listings?.features || []).map((f) => [f.geometry.coordinates[1], f.geometry.coordinates[0]]);
-  if (pts.length > 1) map.fitBounds(pts, { padding: [40, 40] });
+  if (pts.length > 1) map.fitBounds(pts, { padding: [40, 40], maxZoom: 15 });
+  else if (pts.length === 1) map.setView(pts[0], 15);
+}
+
+// Extension mode: listings arrive from the realestate.com.au tab via postMessage.
+if (EXTENSION) {
+  let fitted = false;
+  window.addEventListener("message", (e) => {
+    if (e.source !== window.parent || e.origin !== "https://www.realestate.com.au") return;
+    if (e.data?.type !== "dreamhouse:listings") return;
+    data.listings = { type: "FeatureCollection", features: e.data.features };
+    refresh("listings");
+    window.parent.postMessage({ type: "dreamhouse:summaries", items: e.data.features.map(summarise) }, "https://www.realestate.com.au");
+    if (!fitted && e.data.features.length) { fitListings(); fitted = true; }
+  });
+  window.addEventListener("message", (e) => {
+    if (e.source !== window.parent || e.origin !== "https://www.realestate.com.au" || e.data?.type !== "dreamhouse:focus") return;
+    const f = data.listings?.features.find((x) => x.properties.id === e.data.id);
+    if (!f) return;
+    const [lon, lat] = f.geometry.coordinates;
+    map.setView([lat, lon], 16);
+    L.popup({ maxWidth: 340 }).setLatLng([lat, lon]).setContent(report([lon, lat], f)).openOn(map);
+  });
+}
+
+(async () => {
+  const names = ["suburbs", "supermarkets", "transport_stops", "bushfire", "flood"];
+  if (!EXTENSION) names.push("listings");
+  else data.listings = { type: "FeatureCollection", features: [] };
+  await Promise.all(names.map(load));
+  Object.keys(builders).forEach(refresh);
+  fitListings();
+  if (EXTENSION) window.parent.postMessage({ type: "dreamhouse:ready" }, "https://www.realestate.com.au");
 })();
