@@ -305,6 +305,38 @@ map.on("click", (e) => {
   L.popup({ maxWidth: 340 }).setLatLng(e.latlng).setContent(report([e.latlng.lng, e.latlng.lat])).openOn(map);
 });
 
+// "Load REA listings here": ask the extension (site-bridge.js) to load this search
+// on realestate.com.au in a background tab of your browser.
+const reaBtn = document.getElementById("rea-load"), reaHint = document.getElementById("rea-hint");
+let haveExtension = false;
+function reaSearchUrl() {
+  const b = map.getBounds(), v = (id) => Math.max(0, Math.round(+document.getElementById(id).value || 0));
+  const [min, max, land] = [v("rea-min"), v("rea-max"), v("rea-land")];
+  const path = ["property-house", land ? `size-${land}` : "", min || max ? `between-${min}-${max || "any"}` : ""].filter(Boolean).join("-");
+  const bbox = [b.getNorth(), b.getWest(), b.getSouth(), b.getEast()].map((x) => x.toFixed(6)).join(",");
+  return `${REA}/buy/${path}/map-1?misc=ex-no-display-price&boundingBox=${encodeURIComponent(bbox)}&activeSort=price-asc&sourcePage=map`;
+}
+if (reaBtn) {
+  reaBtn.disabled = true;
+  reaBtn.addEventListener("click", () => {
+    if (!haveExtension) return;
+    reaBtn.disabled = true;
+    reaHint.textContent = "Loading from realestate.com.au…";
+    window.postMessage({ type: "dreamhouse:load", url: reaSearchUrl() }, location.origin);
+    setTimeout(() => { reaBtn.disabled = false; }, 8000);  // one load at a time
+  });
+  window.addEventListener("message", (e) => {
+    if (e.source !== window || e.origin !== location.origin) return;
+    if (e.data?.type === "dreamhouse:extension") {
+      haveExtension = true;
+      reaBtn.disabled = false;
+      reaHint.textContent = "Loads this map area on realestate.com.au in a background tab of your browser.";
+    } else if (e.data?.type === "dreamhouse:load-status") {
+      reaHint.textContent = e.data.text;
+    }
+  });
+}
+
 document.getElementById("search").addEventListener("submit", async (e) => {
   e.preventDefault();
   const q = document.getElementById("search-input").value.trim();

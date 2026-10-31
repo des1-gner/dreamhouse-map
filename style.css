@@ -31,3 +31,8 @@ select, input[type=search] { width: 100%; padding: 6px 8px; border: 1px solid #d
 .pin.in { background: #cf222e; }
 .pin.out { background: #8c959f; }
 .basemap { filter: grayscale(.7) brightness(1.05); }  /* mute OSM colours so overlays stand out */
+#rea-controls { margin-top: 8px; }
+#rea-controls .row { display: flex; gap: 6px; }
+#rea-controls input[type=number] { width: 100%; padding: 4px 6px; border: 1px solid #d0d7de; border-radius: 6px; font: inherit; }
+#rea-load { width: 100%; margin-top: 6px; padding: 7px; border: 0; border-radius: 6px; background: #cf222e; color: #fff; font: 600 14px system-ui, sans-serif; cursor: pointer; }
+#rea-load:disabled { background: #8c959f; cursor: default; }

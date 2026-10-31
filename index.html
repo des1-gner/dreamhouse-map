@@ -21,6 +21,15 @@
       <h2>Listings</h2>
       <label><input type="checkbox" data-layer="listings" checked> Listings <span class="count" id="count-listings"></span></label>
       <label><input type="checkbox" id="budget-only" checked> In budget only</label>
+      <div id="rea-controls">
+        <div class="row">
+          <label>Min $<input type="number" id="rea-min" value="500000" step="10000"></label>
+          <label>Max $<input type="number" id="rea-max" value="600000" step="10000"></label>
+        </div>
+        <label>Min land m² <input type="number" id="rea-land" value="300" step="50"></label>
+        <button type="button" id="rea-load">Load REA listings here</button>
+        <p class="hint" id="rea-hint">Needs the Dreamhouse Chrome extension. It loads this search on realestate.com.au in a background tab of your browser.</p>
+      </div>
     </section>
 
     <section>
