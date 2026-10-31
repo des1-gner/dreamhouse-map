@@ -447,7 +447,7 @@ if (reaBtn) {
   });
   ["rea-min", "rea-max", "rea-land"].forEach((id) => document.getElementById(id).addEventListener("change", () => auto.checked && requestRea()));
   window.addEventListener("message", (e) => {
-    if (e.source !== window || e.origin !== location.origin) return;
+    if (e.origin !== location.origin) return;
     if (e.data?.type === "dreamhouse:extension") {
       haveExtension = true;
       reaBtn.disabled = false;
@@ -520,7 +520,7 @@ function receiveListings(msg) {
 }
 if (!EXTENSION) {
   window.addEventListener("message", (e) => {
-    if (e.source === window && e.origin === location.origin && e.data?.type === "dreamhouse:listings") receiveListings(e.data);
+    if (e.origin === location.origin && e.data?.type === "dreamhouse:listings") receiveListings(e.data);
   });
 }
 if (EXTENSION) {
