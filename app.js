@@ -25,6 +25,7 @@ const fmt = {
   km: (m) => m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`,
 };
 const titleCase = (s) => String(s ?? "").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+const safeUrl = (u) => { try { return ["https:", "http:"].includes(new URL(u).protocol); } catch { return false; } };
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 function haversine([lon1, lat1], [lon2, lat2]) {
@@ -141,7 +142,7 @@ function report(pt, listing) {
 
   const addr = p?.address;
   h += `<div class="links" style="margin-top:8px">`;
-  if (p?.url) h += `<a href="${esc(p.url)}" target="_blank" rel="noopener">Listing</a>`;
+  if (safeUrl(p?.url)) h += `<a href="${esc(p.url)}" target="_blank" rel="noopener">Listing</a>`;
   h += `<a href="${esc(p?.nbn_check || "https://www.nbnco.com.au/connect-home-or-business/check-your-address")}" target="_blank" rel="noopener">Check NBN</a>`;
   h += `<a href="https://www.google.com/maps?q=${pt[1]},${pt[0]}" target="_blank" rel="noopener">Google Maps</a>`;
   h += `</div></div>`;
@@ -343,19 +344,34 @@ function fitListings() {
   else if (pts.length === 1) map.setView(pts[0], 15);
 }
 
-// Extension mode: listings arrive from the realestate.com.au tab via postMessage.
-if (EXTENSION) {
-  let fitted = false;
+// Listings from your realestate.com.au tab, sent by the browser extension: either
+// into the side panel on REA (EXTENSION) or into this site via site-bridge.js.
+const REA = "https://www.realestate.com.au";
+let lastBox = null;
+function receiveListings(msg) {
+  data.listings = { type: "FeatureCollection", features: (msg.features || []).filter((f) => Array.isArray(f?.geometry?.coordinates)) };
+  refresh("listings");
+  const box = msg.box && JSON.stringify(msg.box);
+  if (box && box !== lastBox) {
+    lastBox = box;
+    map.fitBounds([[msg.box.south, msg.box.west], [msg.box.north, msg.box.east]]);
+  } else if (!box && !lastBox) fitListings();
+  statusEl.textContent = `${data.listings.features.length} listings from your realestate.com.au tab.`;
+}
+if (!EXTENSION) {
   window.addEventListener("message", (e) => {
-    if (e.source !== window.parent || e.origin !== "https://www.realestate.com.au") return;
+    if (e.source === window && e.origin === location.origin && e.data?.type === "dreamhouse:listings") receiveListings(e.data);
+  });
+}
+if (EXTENSION) {
+  window.addEventListener("message", (e) => {
+    if (e.source !== window.parent || e.origin !== REA) return;
     if (e.data?.type !== "dreamhouse:listings") return;
-    data.listings = { type: "FeatureCollection", features: e.data.features };
-    refresh("listings");
-    window.parent.postMessage({ type: "dreamhouse:summaries", items: e.data.features.map(summarise) }, "https://www.realestate.com.au");
-    if (!fitted && e.data.features.length) { fitListings(); fitted = true; }
+    receiveListings(e.data);
+    window.parent.postMessage({ type: "dreamhouse:summaries", items: data.listings.features.map(summarise) }, REA);
   });
   window.addEventListener("message", (e) => {
-    if (e.source !== window.parent || e.origin !== "https://www.realestate.com.au" || e.data?.type !== "dreamhouse:focus") return;
+    if (e.source !== window.parent || e.origin !== REA || e.data?.type !== "dreamhouse:focus") return;
     const f = data.listings?.features.find((x) => x.properties.id === e.data.id);
     if (!f) return;
     const [lon, lat] = f.geometry.coordinates;
@@ -371,5 +387,6 @@ if (EXTENSION) {
   await Promise.all(names.map(load));
   Object.keys(builders).forEach(refresh);
   fitListings();
-  if (EXTENSION) window.parent.postMessage({ type: "dreamhouse:ready" }, "https://www.realestate.com.au");
+  if (EXTENSION) window.parent.postMessage({ type: "dreamhouse:ready" }, REA);
+  else window.postMessage({ type: "dreamhouse:ready" }, location.origin);  // lets site-bridge.js resend
 })();
