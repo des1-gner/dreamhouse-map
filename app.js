@@ -18,6 +18,9 @@ L.tileLayer(`${ESRI}/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}`, { ma
 const DATA_BASE = window.DREAMHOUSE_DATA_BASE || "data/";
 const EXTENSION = !!window.DREAMHOUSE_EXTENSION;
 
+// The extension panel starts hidden (zero size); re-measure whenever it resizes.
+new ResizeObserver(() => map.invalidateSize()).observe(map.getContainer());
+
 const data = {};    // name -> FeatureCollection (or null if missing)
 const layers = {};  // name -> Leaflet layer
 const statusEl = document.getElementById("status");
@@ -405,7 +408,8 @@ function updateKey() {
 
 // ---------- wiring ----------
 map.on("click", (e) => {
-  L.popup({ maxWidth: 340 }).setLatLng(e.latlng).setContent(report([e.latlng.lng, e.latlng.lat])).openOn(map);
+  const ll = e.latlng.wrap();
+  L.popup({ maxWidth: 340 }).setLatLng(ll).setContent(report([ll.lng, ll.lat])).openOn(map);
 });
 
 // "Load REA listings here": ask the extension (site-bridge.js) to load this search
